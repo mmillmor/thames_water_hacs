@@ -81,6 +81,7 @@ class ThamesWaterConsumptionSensor(ThamesWaterBaseSensor):
     ) -> None:
         """Initialize cumulative consumption sensor."""
         super().__init__(coordinator, meter_id)
+        self.entity_id = f"sensor.thames_water_meter_{meter_id.lower()}_cumulative_consumption"
         self._attr_name = "Cumulative Consumption"
         self._attr_unique_id = f"{DOMAIN}_{meter_id}_cumulative_consumption"
 
@@ -121,6 +122,7 @@ class ThamesWaterLatestDailyUsageSensor(ThamesWaterBaseSensor):
     ) -> None:
         """Initialize latest daily usage sensor."""
         super().__init__(coordinator, meter_id)
+        self.entity_id = f"sensor.thames_water_meter_{meter_id.lower()}_latest_daily_usage"
         self._attr_name = "Latest Daily Usage"
         self._attr_unique_id = f"{DOMAIN}_{meter_id}_latest_daily_usage"
 

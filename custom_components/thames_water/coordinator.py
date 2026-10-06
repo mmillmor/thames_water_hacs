@@ -176,16 +176,21 @@ class ThamesWaterDataUpdateCoordinator(DataUpdateCoordinator[Dict[str, Any]]):
             from homeassistant.components.recorder.models import (
                 StatisticData,
                 StatisticMetaData,
+                StatisticMeanType,
             )
-            from homeassistant.components.recorder.statistics import (
-                async_add_external_statistics,
-                async_import_statistics,
-            )
-        except ImportError:
-            _LOGGER.debug(
-                "Recorder component not loaded or available; skipping statistic import."
-            )
-            return
+            mean_type = StatisticMeanType.NONE
+        except (ImportError, AttributeError):
+            try:
+                from homeassistant.components.recorder.models import (
+                    StatisticData,
+                    StatisticMetaData,
+                )
+                mean_type = 0  # type: ignore
+            except ImportError:
+                _LOGGER.debug(
+                    "Recorder component not loaded or available; skipping statistic import."
+                )
+                return
 
         # Prepare StatisticData objects for each historical timestamp
         statistic_data_list: List[StatisticData] = []
@@ -198,12 +203,13 @@ class ThamesWaterDataUpdateCoordinator(DataUpdateCoordinator[Dict[str, Any]]):
             statistic_data_list.append(stat_entry)  # type: ignore
 
         statistic_id = f"{STATISTIC_SOURCE}:{meter_id}_water_consumption"
-        entity_statistic_id = f"sensor.thames_water_{meter_id.lower()}_consumption"
+        entity_statistic_id = f"sensor.thames_water_meter_{meter_id.lower()}_cumulative_consumption"
 
-        # Build StatisticMetaData
+        # Build StatisticMetaData for external statistics (used by HA Energy Dashboard)
         meta: Dict[str, Any] = {
             "has_mean": False,
-            "mean_type": 0,  # MeanType.NONE (for HA 2026.11+ compatibility)
+            "has_sum": True,
+            "mean_type": mean_type,
             "unit_of_measurement": "m³",
             "unit_class": "volume",
             "source": STATISTIC_SOURCE,
@@ -211,33 +217,51 @@ class ThamesWaterDataUpdateCoordinator(DataUpdateCoordinator[Dict[str, Any]]):
             "name": f"Thames Water Meter {meter_id} Consumption",
         }
 
+        # Build StatisticMetaData for entity statistics (used by entity More Info graph)
         entity_meta: Dict[str, Any] = {
             "has_mean": False,
-            "mean_type": 0,
+            "has_sum": True,
+            "mean_type": mean_type,
             "unit_of_measurement": "m³",
             "unit_class": "volume",
             "source": "recorder",
             "statistic_id": entity_statistic_id,
-            "name": f"Thames Water {meter_id} Consumption",
+            "name": f"Thames Water Meter {meter_id} Cumulative Consumption",
         }
 
+        _LOGGER.info(
+            "Importing %d historical statistic data points for meter %s (ID: %s)",
+            len(statistic_data_list),
+            meter_id,
+            statistic_id,
+        )
+
         try:
-            _LOGGER.info(
-                "Importing %d historical statistic data points for meter %s (ID: %s)",
-                len(statistic_data_list),
-                meter_id,
+            from homeassistant.components.recorder.statistics import (
+                async_add_external_statistics,
+                async_import_statistics,
+            )
+        except ImportError:
+            return
+
+        # 1. Add as external statistic source (available to HA Energy/Water dashboard)
+        try:
+            async_add_external_statistics(self.hass, meta, statistic_data_list)
+            _LOGGER.debug("External statistics successfully injected for %s", statistic_id)
+        except Exception as err:
+            _LOGGER.warning(
+                "Failed to import external statistics for %s: %s",
                 statistic_id,
+                err,
             )
 
-            # Add as external statistic source (available to HA Energy/Water dashboard)
-            async_add_external_statistics(self.hass, meta, statistic_data_list)
-
-            # Also import directly to the sensor entity's statistics if recorder is active
+        # 2. Also import directly to the sensor entity's statistics if recorder is active
+        try:
             async_import_statistics(self.hass, entity_meta, statistic_data_list)
-
-        except Exception as err:  # pylint: disable=broad-except
+            _LOGGER.debug("Entity statistics successfully injected for %s", entity_statistic_id)
+        except Exception as err:
             _LOGGER.warning(
-                "Failed to import historical statistics for meter %s: %s",
-                meter_id,
+                "Failed to import entity statistics for %s: %s",
+                entity_statistic_id,
                 err,
             )
