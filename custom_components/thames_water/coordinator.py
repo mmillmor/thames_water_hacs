@@ -3,13 +3,14 @@ from __future__ import annotations
 
 from datetime import date, datetime, timedelta, timezone
 import logging
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, callback
+from homeassistant.helpers.event import async_track_time_change
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
 from .api import ThamesWaterAPI, ThamesWaterError, UsageRecord
-from .const import DEFAULT_UPDATE_INTERVAL_HOURS, DOMAIN, STATISTIC_SOURCE
+from .const import DEFAULT_SCHEDULE_HOUR, DEFAULT_SCHEDULE_MINUTE, DOMAIN, STATISTIC_SOURCE
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -22,24 +23,73 @@ class ThamesWaterDataUpdateCoordinator(DataUpdateCoordinator[Dict[str, Any]]):
         hass: HomeAssistant,
         api: ThamesWaterAPI,
         meters: List[str],
-        update_interval_hours: int = DEFAULT_UPDATE_INTERVAL_HOURS,
+        schedule_hour: int = DEFAULT_SCHEDULE_HOUR,
+        schedule_minute: int = DEFAULT_SCHEDULE_MINUTE,
     ) -> None:
         """Initialize the coordinator."""
         super().__init__(
             hass,
             _LOGGER,
             name=DOMAIN,
-            update_interval=timedelta(hours=update_interval_hours),
+            update_interval=None,  # Scheduled at specific time of day rather than polling interval
         )
         self.api = api
         self.meters = meters
+        self.schedule_hour = schedule_hour
+        self.schedule_minute = schedule_minute
+        self._unsub_time_track: Optional[Callable[[], None]] = None
+        self._initial_fetch_done: bool = False
+
+    def async_setup_schedule(self) -> None:
+        """Schedule coordinator to refresh daily at fixed time (default 06:00 AM)."""
+        if self._unsub_time_track:
+            self._unsub_time_track()
+            self._unsub_time_track = None
+
+        @callback
+        async def _async_scheduled_update(*_: Any) -> None:
+            _LOGGER.info(
+                "Executing scheduled daily Thames Water update at %02d:%02d",
+                self.schedule_hour,
+                self.schedule_minute,
+            )
+            await self.async_request_refresh()
+
+        try:
+            self._unsub_time_track = async_track_time_change(
+                self.hass,
+                _async_scheduled_update,
+                hour=self.schedule_hour,
+                minute=self.schedule_minute,
+                second=0,
+            )
+            _LOGGER.info(
+                "Thames Water daily update scheduled for %02d:%02d local time",
+                self.schedule_hour,
+                self.schedule_minute,
+            )
+        except Exception as err:
+            _LOGGER.warning("Could not register time change tracker: %s", err)
+
+    def unload(self) -> None:
+        """Unsubscribe from schedule timer when integration is unloaded."""
+        if self._unsub_time_track:
+            self._unsub_time_track()
+            self._unsub_time_track = None
 
     async def _async_update_data(self) -> Dict[str, Any]:
         """Fetch data from Thames Water API and import past values to HA statistics."""
         data: Dict[str, Any] = {}
         end_date = date.today()
-        # Fetch past 30 days of data to catch any new/updated historical readings
-        start_date = end_date - timedelta(days=30)
+
+        if not self._initial_fetch_done:
+            # First run: fetch past 365 days (1 year) to backfill historical statistics
+            start_date = end_date - timedelta(days=365)
+            self._initial_fetch_done = True
+            _LOGGER.info("Performing initial Thames Water backfill for past 365 days")
+        else:
+            # Subsequent daily pulls: fetch past 7 days to cover publication lag and adjustments
+            start_date = end_date - timedelta(days=7)
 
         try:
             # Ensure API is authenticated

@@ -11,6 +11,7 @@ ha_mock.core = MagicMock()
 ha_mock.const = MagicMock()
 ha_mock.data_entry_flow = MagicMock()
 ha_mock.helpers = MagicMock()
+ha_mock.helpers.event = MagicMock()
 ha_mock.components = MagicMock()
 
 sys.modules["homeassistant"] = ha_mock
@@ -19,6 +20,7 @@ sys.modules["homeassistant.core"] = ha_mock.core
 sys.modules["homeassistant.const"] = ha_mock.const
 sys.modules["homeassistant.data_entry_flow"] = ha_mock.data_entry_flow
 sys.modules["homeassistant.helpers"] = ha_mock.helpers
+sys.modules["homeassistant.helpers.event"] = ha_mock.helpers.event
 sys.modules["homeassistant.helpers.aiohttp_client"] = ha_mock.helpers.aiohttp_client
 sys.modules["homeassistant.helpers.update_coordinator"] = ha_mock.helpers.update_coordinator
 sys.modules["homeassistant.components"] = ha_mock.components

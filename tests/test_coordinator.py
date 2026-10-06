@@ -8,36 +8,59 @@ from custom_components.thames_water.coordinator import ThamesWaterDataUpdateCoor
 
 
 @pytest.mark.asyncio
-async def test_coordinator_update_data():
-    """Test coordinator update process and historical statistics injection."""
+async def test_coordinator_initial_and_subsequent_pulls():
+    """Test initial pull (365 days) vs subsequent daily pull (30 days)."""
     hass = MagicMock()
     mock_api = AsyncMock()
     mock_api.async_login.return_value = True
 
     dt1 = datetime(2024, 10, 1, 10, 0, tzinfo=timezone.utc)
-    dt2 = datetime(2024, 10, 1, 11, 0, tzinfo=timezone.utc)
-
     records = [
         UsageRecord(timestamp=dt1, volume_m3=0.015, cumulative_m3=100.015, is_actual=True),
-        UsageRecord(timestamp=dt2, volume_m3=0.020, cumulative_m3=100.035, is_actual=True),
     ]
-
     mock_api.async_get_consumption.return_value = records
 
     coordinator = ThamesWaterDataUpdateCoordinator(
         hass=hass,
         api=mock_api,
         meters=["WM123456"],
-        update_interval_hours=6,
+        schedule_hour=6,
+        schedule_minute=0,
     )
 
-    with patch.object(coordinator, "_async_import_historical_statistics") as mock_import:
-        data = await coordinator._async_update_data()
+    with patch.object(coordinator, "_async_import_historical_statistics"):
+        # First pull: should request past 365 days
+        await coordinator._async_update_data()
+        assert coordinator._initial_fetch_done is True
+        call_args_1 = mock_api.async_get_consumption.call_args[1]
+        assert (date.today() - call_args_1["start_date"]).days == 365
 
-        assert "WM123456" in data
-        meter_info = data["WM123456"]
-        assert meter_info["latest_cumulative_m3"] == 100.035
-        assert meter_info["latest_interval_usage_m3"] == 0.020
-        assert meter_info["latest_daily_usage_l"] == 35.0  # (0.015 + 0.020) * 1000
-        assert meter_info["total_records_synced"] == 2
-        mock_import.assert_called_once_with("WM123456", records)
+        # Second pull: should request past 7 days
+        await coordinator._async_update_data()
+        call_args_2 = mock_api.async_get_consumption.call_args[1]
+        assert (date.today() - call_args_2["start_date"]).days == 7
+
+
+@pytest.mark.asyncio
+async def test_coordinator_schedule_setup():
+    """Test daily schedule registration at 06:00 AM."""
+    hass = MagicMock()
+    mock_api = AsyncMock()
+
+    coordinator = ThamesWaterDataUpdateCoordinator(
+        hass=hass,
+        api=mock_api,
+        meters=["WM123456"],
+        schedule_hour=6,
+        schedule_minute=0,
+    )
+
+    with patch("custom_components.thames_water.coordinator.async_track_time_change") as mock_track:
+        mock_track.return_value = MagicMock()
+        coordinator.async_setup_schedule()
+
+        mock_track.assert_called_once()
+        _, kwargs = mock_track.call_args
+        assert kwargs["hour"] == 6
+        assert kwargs["minute"] == 0
+        assert kwargs["second"] == 0

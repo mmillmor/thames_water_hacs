@@ -9,7 +9,9 @@ CONF_PASSWORD = "password"
 CONF_METERS = "meters"
 CONF_ACCOUNT_NUMBER = "account_number"
 
-DEFAULT_UPDATE_INTERVAL_HOURS = 6
+# Schedule daily pull at 06:00 AM local time
+DEFAULT_SCHEDULE_HOUR = 6
+DEFAULT_SCHEDULE_MINUTE = 0
 
 # Sensor device classes & units
 UNIT_CUBIC_METERS = "m³"
