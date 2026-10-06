@@ -9,7 +9,10 @@
   "iot_class": "cloud_polling",
   "issue_tracker": "https://github.com/mmillmor/thames_water_hacs/issues",
   "requirements": [
-    "aiohttp"
+    "thameswaterapi>=0.6.0"
   ],
-  "version": "1.0.1"
+  "dependencies": [
+    "recorder"
+  ],
+  "version": "1.0.2"
 }

@@ -3,11 +3,10 @@
     "step": {
       "user": {
         "title": "Thames Water Account Authentication",
-        "description": "Please enter your Thames Water credentials or session cookie. (If login fails due to Thames Water SSO/CAPTCHA, paste your browser session cookie).",
+        "description": "Please enter your Thames Water online account credentials.",
         "data": {
           "username": "Email / Username",
-          "password": "Password (Optional if Cookie provided)",
-          "session_cookie": "Session Cookie (Optional)"
+          "password": "Password"
         }
       },
       "meters": {
@@ -19,7 +18,7 @@
       }
     },
     "error": {
-      "invalid_auth": "Invalid credentials or session cookie expired.",
+      "invalid_auth": "Invalid username or password.",
       "cannot_connect": "Failed to connect to Thames Water. Please check your internet connection.",
       "no_meters_selected": "You must select at least one meter.",
       "unknown": "Unexpected error occurred."

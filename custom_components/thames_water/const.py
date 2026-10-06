@@ -6,7 +6,6 @@ ATTRIBUTION = "Data provided by Thames Water"
 
 CONF_USERNAME = "username"
 CONF_PASSWORD = "password"
-CONF_SESSION_COOKIE = "session_cookie"
 CONF_METERS = "meters"
 CONF_ACCOUNT_NUMBER = "account_number"
 
