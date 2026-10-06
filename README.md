@@ -27,7 +27,7 @@ This integration injects historical readings into Home Assistant's long-term sta
 
 1. Open **HACS** in your Home Assistant instance.
 2. Click on the top-right menu and select **Custom repositories**.
-3. Add `https://github.com/jelmer/homeassistant-thameswater` (or your repository URL) with category **Integration**.
+3. Add `https://github.com/mmillmor/thames_water_hacs` (or your repository URL) with category **Integration**.
 4. Search for **Thames Water** and click **Download**.
 5. Restart Home Assistant.
 
@@ -65,3 +65,6 @@ pytest -v
 ## License
 
 MIT License
+
+## Credit
+Built with inspiration from https://github.com/AyrtonB/Thames-Water and https://github.com/jelmer/homeassistant-thameswater
