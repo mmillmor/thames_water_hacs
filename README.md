@@ -66,3 +66,11 @@ pytest -v
 ## License
 
 MIT License
+
+---
+
+## Credits
+
+Built with inspiration from https://github.com/AyrtonB/Thames-Water and https://github.com/jelmer/homeassistant-thameswater
+
+
