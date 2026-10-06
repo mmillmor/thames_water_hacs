@@ -1,0 +1,193 @@
+"""DataUpdateCoordinator for Thames Water integration."""
+from __future__ import annotations
+
+from datetime import date, datetime, timedelta, timezone
+import logging
+from typing import Any, Dict, List, Optional
+
+from homeassistant.core import HomeAssistant
+from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
+
+from .api import ThamesWaterAPI, ThamesWaterError, UsageRecord
+from .const import DEFAULT_UPDATE_INTERVAL_HOURS, DOMAIN, STATISTIC_SOURCE
+
+_LOGGER = logging.getLogger(__name__)
+
+
+class ThamesWaterDataUpdateCoordinator(DataUpdateCoordinator[Dict[str, Any]]):
+    """Class to manage fetching Thames Water data and importing historical statistics."""
+
+    def __init__(
+        self,
+        hass: HomeAssistant,
+        api: ThamesWaterAPI,
+        meters: List[str],
+        update_interval_hours: int = DEFAULT_UPDATE_INTERVAL_HOURS,
+    ) -> None:
+        """Initialize the coordinator."""
+        super().__init__(
+            hass,
+            _LOGGER,
+            name=DOMAIN,
+            update_interval=timedelta(hours=update_interval_hours),
+        )
+        self.api = api
+        self.meters = meters
+
+    async def _async_update_data(self) -> Dict[str, Any]:
+        """Fetch data from Thames Water API and import past values to HA statistics."""
+        data: Dict[str, Any] = {}
+        end_date = date.today()
+        # Fetch past 30 days of data to catch any new/updated historical readings
+        start_date = end_date - timedelta(days=30)
+
+        try:
+            # Ensure API is authenticated
+            await self.api.async_login()
+        except ThamesWaterError as err:
+            _LOGGER.error("Authentication failed during coordinator update: %s", err)
+            raise UpdateFailed(f"Authentication failed: {err}") from err
+
+        for meter_id in self.meters:
+            try:
+                _LOGGER.debug(
+                    "Fetching past readings for meter %s from %s to %s",
+                    meter_id,
+                    start_date,
+                    end_date,
+                )
+                records = await self.api.async_get_consumption(
+                    meter_id=meter_id,
+                    start_date=start_date,
+                    end_date=end_date,
+                    granularity="H",
+                )
+
+                if records:
+                    # Import historical readings into HA Recorder Statistics
+                    await self._async_import_historical_statistics(meter_id, records)
+
+                    latest_record = records[-1]
+                    today_utc = datetime.now(timezone.utc).date()
+                    latest_date = latest_record.timestamp.date()
+                    lag_days = (today_utc - latest_date).days
+
+                    # Calculate latest complete day total in Liters
+                    latest_day_records = [
+                        r for r in records if r.timestamp.date() == latest_date
+                    ]
+                    latest_day_total_m3 = sum(r.volume_m3 for r in latest_day_records)
+                    latest_day_total_l = round(latest_day_total_m3 * 1000.0, 2)
+
+                    data[meter_id] = {
+                        "latest_reading_time": latest_record.timestamp,
+                        "latest_cumulative_m3": latest_record.cumulative_m3,
+                        "latest_interval_usage_m3": latest_record.volume_m3,
+                        "latest_daily_usage_l": latest_day_total_l,
+                        "latest_daily_usage_m3": round(latest_day_total_m3, 4),
+                        "latest_reading_date": latest_date.isoformat(),
+                        "data_lag_days": max(0, lag_days),
+                        "total_records_synced": len(records),
+                        "is_actual": latest_record.is_actual,
+                    }
+                else:
+                    _LOGGER.warning("No consumption records returned for meter %s", meter_id)
+                    data[meter_id] = {
+                        "latest_reading_time": None,
+                        "latest_cumulative_m3": 0.0,
+                        "latest_interval_usage_m3": 0.0,
+                        "latest_daily_usage_l": 0.0,
+                        "latest_daily_usage_m3": 0.0,
+                        "latest_reading_date": None,
+                        "data_lag_days": 3,
+                        "total_records_synced": 0,
+                        "is_actual": False,
+                    }
+
+            except ThamesWaterError as err:
+                _LOGGER.error("Failed to update meter %s: %s", meter_id, err)
+                # Retain existing data if available
+                if self.data and meter_id in self.data:
+                    data[meter_id] = self.data[meter_id]
+                else:
+                    data[meter_id] = {}
+
+        return data
+
+    async def _async_import_historical_statistics(
+        self, meter_id: str, records: List[UsageRecord]
+    ) -> None:
+        """Inject historical consumption data points into Home Assistant long-term statistics."""
+        if not records:
+            return
+
+        try:
+            from homeassistant.components.recorder import get_instance
+            from homeassistant.components.recorder.models import (
+                StatisticData,
+                StatisticMetaData,
+            )
+            from homeassistant.components.recorder.statistics import (
+                async_add_external_statistics,
+                async_import_statistics,
+            )
+        except ImportError:
+            _LOGGER.debug(
+                "Recorder component not loaded or available; skipping statistic import."
+            )
+            return
+
+        # Prepare StatisticData objects for each historical timestamp
+        statistic_data_list: List[StatisticData] = []
+        for rec in records:
+            stat_entry: Dict[str, Any] = {
+                "start": rec.timestamp,
+                "state": rec.volume_m3,        # Incremental usage in m3
+                "sum": rec.cumulative_m3,      # Running total meter reading in m3
+            }
+            statistic_data_list.append(stat_entry)  # type: ignore
+
+        statistic_id = f"{STATISTIC_SOURCE}:{meter_id}_water_consumption"
+        entity_statistic_id = f"sensor.thames_water_{meter_id.lower()}_consumption"
+
+        # Build StatisticMetaData
+        meta: Dict[str, Any] = {
+            "has_mean": False,
+            "mean_type": 0,  # MeanType.NONE (for HA 2026.11+ compatibility)
+            "unit_of_measurement": "m³",
+            "unit_class": "volume",
+            "source": STATISTIC_SOURCE,
+            "statistic_id": statistic_id,
+            "name": f"Thames Water Meter {meter_id} Consumption",
+        }
+
+        entity_meta: Dict[str, Any] = {
+            "has_mean": False,
+            "mean_type": 0,
+            "unit_of_measurement": "m³",
+            "unit_class": "volume",
+            "source": "recorder",
+            "statistic_id": entity_statistic_id,
+            "name": f"Thames Water {meter_id} Consumption",
+        }
+
+        try:
+            _LOGGER.info(
+                "Importing %d historical statistic data points for meter %s (ID: %s)",
+                len(statistic_data_list),
+                meter_id,
+                statistic_id,
+            )
+
+            # Add as external statistic source (available to HA Energy/Water dashboard)
+            async_add_external_statistics(self.hass, meta, statistic_data_list)
+
+            # Also import directly to the sensor entity's statistics if recorder is active
+            async_import_statistics(self.hass, entity_meta, statistic_data_list)
+
+        except Exception as err:  # pylint: disable=broad-except
+            _LOGGER.warning(
+                "Failed to import historical statistics for meter %s: %s",
+                meter_id,
+                err,
+            )

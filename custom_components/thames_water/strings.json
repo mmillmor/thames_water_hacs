@@ -1,0 +1,30 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Thames Water Account Authentication",
+        "description": "Please enter your Thames Water online account credentials.",
+        "data": {
+          "username": "Email / Username",
+          "password": "Password"
+        }
+      },
+      "meters": {
+        "title": "Select Meters",
+        "description": "Choose which Thames Water meters you would like to monitor in Home Assistant.",
+        "data": {
+          "meters": "Available Meters"
+        }
+      }
+    },
+    "error": {
+      "invalid_auth": "Invalid username or password.",
+      "cannot_connect": "Failed to connect to Thames Water. Please check your internet connection.",
+      "no_meters_selected": "You must select at least one meter.",
+      "unknown": "Unexpected error occurred."
+    },
+    "abort": {
+      "already_configured": "This Thames Water account is already configured."
+    }
+  }
+}
