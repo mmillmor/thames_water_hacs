@@ -1,11 +1,11 @@
 {
   "domain": "thames_water",
   "name": "Thames Water",
-  "codeowners": ["@jelmer"],
+  "codeowners": ["@mmillmor"],
   "config_flow": true,
-  "documentation": "https://github.com/jelmer/homeassistant-thameswater",
+  "documentation": "https://github.com/mmillmor/thames_water_hacs",
   "iot_class": "cloud_polling",
-  "issue_tracker": "https://github.com/jelmer/homeassistant-thameswater/issues",
+  "issue_tracker": "https://github.com/mmillmor/thames_water_hacs/issues",
   "requirements": ["aiohttp"],
   "version": "1.0.0"
 }
