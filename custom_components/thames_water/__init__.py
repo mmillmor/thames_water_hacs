@@ -9,7 +9,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
 from .api import ThamesWaterAPI
-from .const import CONF_METERS, CONF_PASSWORD, CONF_USERNAME, DOMAIN
+from .const import CONF_METERS, CONF_PASSWORD, CONF_SESSION_COOKIE, CONF_USERNAME, DOMAIN
 from .coordinator import ThamesWaterDataUpdateCoordinator
 
 _LOGGER = logging.getLogger(__name__)
@@ -20,11 +20,17 @@ PLATFORMS: list[Platform] = [Platform.SENSOR]
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up Thames Water from a config entry."""
     username = entry.data[CONF_USERNAME]
-    password = entry.data[CONF_PASSWORD]
+    password = entry.data.get(CONF_PASSWORD, "")
+    session_cookie = entry.data.get(CONF_SESSION_COOKIE)
     meters = entry.data.get(CONF_METERS, [])
 
     session = async_get_clientsession(hass)
-    api = ThamesWaterAPI(username, password, session=session)
+    api = ThamesWaterAPI(
+        username,
+        password,
+        session_cookie=session_cookie,
+        session=session,
+    )
 
     coordinator = ThamesWaterDataUpdateCoordinator(
         hass,

@@ -7,12 +7,11 @@ from typing import Any, Dict, List, Optional
 import voluptuous as vol
 
 from homeassistant import config_entries
-from homeassistant.core import callback
 from homeassistant.data_entry_flow import FlowResult
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
 from .api import ThamesWaterAPI, ThamesWaterAuthError, ThamesWaterConnectionError, MeterInfo
-from .const import CONF_PASSWORD, CONF_USERNAME, CONF_METERS, DOMAIN
+from .const import CONF_PASSWORD, CONF_SESSION_COOKIE, CONF_USERNAME, CONF_METERS, DOMAIN
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -26,23 +25,30 @@ class ThamesWaterConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         """Initialize config flow."""
         self._username: Optional[str] = None
         self._password: Optional[str] = None
+        self._session_cookie: Optional[str] = None
         self._available_meters: List[MeterInfo] = []
 
     async def async_step_user(
         self, user_input: Optional[Dict[str, Any]] = None
     ) -> FlowResult:
-        """Handle initial step: user enters username and password."""
+        """Handle initial step: user enters credentials or session cookie."""
         errors: Dict[str, str] = {}
 
         if user_input is not None:
             self._username = user_input[CONF_USERNAME].strip()
-            self._password = user_input[CONF_PASSWORD].strip()
+            self._password = user_input.get(CONF_PASSWORD, "").strip()
+            self._session_cookie = user_input.get(CONF_SESSION_COOKIE, "").strip() or None
 
             await self.async_set_unique_id(self._username.lower())
             self._abort_if_unique_id_configured()
 
             session = async_get_clientsession(self.hass)
-            api = ThamesWaterAPI(self._username, self._password, session=session)
+            api = ThamesWaterAPI(
+                self._username,
+                self._password,
+                session_cookie=self._session_cookie,
+                session=session,
+            )
 
             try:
                 await api.async_login()
@@ -50,7 +56,6 @@ class ThamesWaterConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 self._available_meters = meters
 
                 if not meters:
-                    # If no meters explicitly returned, create default meter entry
                     default_meter = MeterInfo(
                         meter_id=f"meter_{abs(hash(self._username)) % 10000000:08d}",
                         account_number="Primary Account",
@@ -58,18 +63,17 @@ class ThamesWaterConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     self._available_meters = [default_meter]
 
                 if len(self._available_meters) == 1:
-                    # Single meter, auto select and finish flow
                     selected_meter = self._available_meters[0].meter_id
                     return self.async_create_entry(
                         title=f"Thames Water ({self._username})",
                         data={
                             CONF_USERNAME: self._username,
                             CONF_PASSWORD: self._password,
+                            CONF_SESSION_COOKIE: self._session_cookie,
                             CONF_METERS: [selected_meter],
                         },
                     )
 
-                # Multiple meters: proceed to meter selection step
                 return await self.async_step_meters()
 
             except ThamesWaterAuthError:
@@ -83,7 +87,8 @@ class ThamesWaterConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         schema = vol.Schema(
             {
                 vol.Required(CONF_USERNAME): str,
-                vol.Required(CONF_PASSWORD): str,
+                vol.Optional(CONF_PASSWORD, default=""): str,
+                vol.Optional(CONF_SESSION_COOKIE, default=""): str,
             }
         )
 
@@ -107,6 +112,7 @@ class ThamesWaterConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     data={
                         CONF_USERNAME: self._username,
                         CONF_PASSWORD: self._password,
+                        CONF_SESSION_COOKIE: self._session_cookie,
                         CONF_METERS: selected_meters,
                     },
                 )
@@ -116,17 +122,6 @@ class ThamesWaterConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             m.meter_id: f"Meter {m.meter_id} ({m.address or m.account_number})"
             for m in self._available_meters
         }
-
-        schema = vol.Schema(
-            {
-                vol.Required(
-                    CONF_METERS, default=list(meter_options.keys())
-                ): vol.All(
-                    cv_multi_select if callable(cv_multi_select) else list,
-                    [vol.In(meter_options)],
-                )
-            }
-        )
 
         return self.async_show_form(
             step_id="meters",

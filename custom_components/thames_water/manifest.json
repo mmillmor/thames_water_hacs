@@ -1,11 +1,15 @@
 {
   "domain": "thames_water",
   "name": "Thames Water",
-  "codeowners": ["@mmillmor"],
+  "codeowners": [
+    "@mmillmor"
+  ],
   "config_flow": true,
   "documentation": "https://github.com/mmillmor/thames_water_hacs",
   "iot_class": "cloud_polling",
   "issue_tracker": "https://github.com/mmillmor/thames_water_hacs/issues",
-  "requirements": ["aiohttp"],
-  "version": "1.0.0"
+  "requirements": [
+    "aiohttp"
+  ],
+  "version": "1.0.1"
 }

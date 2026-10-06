@@ -4,7 +4,12 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 from custom_components.thames_water.api import MeterInfo, ThamesWaterAuthError
 from custom_components.thames_water.config_flow import ThamesWaterConfigFlow
-from custom_components.thames_water.const import CONF_METERS, CONF_PASSWORD, CONF_USERNAME
+from custom_components.thames_water.const import (
+    CONF_METERS,
+    CONF_PASSWORD,
+    CONF_SESSION_COOKIE,
+    CONF_USERNAME,
+)
 
 
 @pytest.mark.asyncio
@@ -31,6 +36,7 @@ async def test_flow_user_single_meter_success():
         assert result["data"] == {
             CONF_USERNAME: "test@example.com",
             CONF_PASSWORD: "password",
+            CONF_SESSION_COOKIE: None,
             CONF_METERS: ["WM123"],
         }
 

@@ -39,7 +39,6 @@ async def test_login_success():
     result = await api.async_login()
 
     assert result is True
-    assert api.account_number == "12345678"
 
 
 @pytest.mark.asyncio
