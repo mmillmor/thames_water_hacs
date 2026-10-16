@@ -64,3 +64,48 @@ async def test_coordinator_schedule_setup():
         assert kwargs["hour"] == 6
         assert kwargs["minute"] == 0
         assert kwargs["second"] == 0
+
+
+@pytest.mark.asyncio
+async def test_import_historical_statistics_monotonic_sum():
+    """Test that imported historical statistics guarantee strictly non-decreasing sum."""
+    hass = MagicMock()
+    mock_api = AsyncMock()
+
+    coordinator = ThamesWaterDataUpdateCoordinator(
+        hass=hass,
+        api=mock_api,
+        meters=["WM123456"],
+    )
+
+    t0 = datetime(2026, 10, 13, 5, 0, tzinfo=timezone.utc)
+    t1 = datetime(2026, 10, 13, 6, 0, tzinfo=timezone.utc)
+    t2 = datetime(2026, 10, 13, 7, 0, tzinfo=timezone.utc)
+
+    # Simulate:
+    # Record 0: volume=0.010, cumulative=1.900
+    # Record 1: volume=0.020, cumulative=0.000 (glitch/drop!)
+    # Record 2: volume=0.005, cumulative=1.925
+    records = [
+        UsageRecord(timestamp=t0, volume_m3=0.010, cumulative_m3=1.900, is_actual=True),
+        UsageRecord(timestamp=t1, volume_m3=0.020, cumulative_m3=0.000, is_actual=True),
+        UsageRecord(timestamp=t2, volume_m3=0.005, cumulative_m3=1.925, is_actual=True),
+    ]
+
+    with patch("homeassistant.components.recorder.statistics.async_add_external_statistics") as mock_add_ext:
+        await coordinator._async_import_historical_statistics("WM123456", records)
+
+        mock_add_ext.assert_called_once()
+        _, meta, stat_list = mock_add_ext.call_args[0]
+
+        assert meta["statistic_id"] == "thames_water:WM123456_water_consumption"
+        assert meta["has_sum"] is True
+        assert len(stat_list) == 3
+
+        # Point 0: sum = 1.9
+        assert stat_list[0]["sum"] == 1.900
+        # Point 1: sum MUST NOT drop to 0! It should advance by 0.02 to 1.92
+        assert stat_list[1]["sum"] == 1.920
+        # Point 2: sum advances to 1.925
+        assert stat_list[2]["sum"] == 1.925
+

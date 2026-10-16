@@ -189,7 +189,14 @@ class ThamesWaterAPI:
                 usage: MeterUsage = await asyncio.to_thread(
                     client.get_meter_usage, meter_id, current_day, current_day, "H"
                 )
-                if usage.Lines:
+                # Verify that valid data is available for this day
+                if (
+                    usage
+                    and getattr(usage, "IsError", False) is not True
+                    and getattr(usage, "IsDataAvailable", True) is not False
+                    and getattr(usage, "IsConsumptionAvailable", True) is not False
+                    and usage.Lines
+                ):
                     hourly_measurements = meter_usage_lines_to_timeseries(
                         current_day, usage.Lines
                     )
@@ -198,8 +205,8 @@ class ThamesWaterAPI:
                         records.append(
                             UsageRecord(
                                 timestamp=utc_ts,
-                                volume_m3=round(m.usage / 1000.0, 5),
-                                cumulative_m3=round(m.total / 1000.0, 5),
+                                volume_m3=max(0.0, round(m.usage / 1000.0, 5)),
+                                cumulative_m3=round(m.total / 1000.0, 5) if m.total else 0.0,
                                 is_actual=True,
                             )
                         )
@@ -210,14 +217,23 @@ class ThamesWaterAPI:
             current_day += timedelta(days=1)
 
         # Step 2: Daily records for dates not covered by hourly
+        # Only import daily records up to the latest confirmed date with hourly data (or 2 days ago)
+        # to prevent injecting empty/placeholder rows for subsequent days.
+        cutoff_date = max(covered_dates) if covered_dates else (date.today() - timedelta(days=2))
+
         try:
             if self._meters_response is None:
                 self._meters_response = await asyncio.to_thread(client.get_meters)
 
-            if self._meters_response and self._meters_response.Lines:
+            if (
+                self._meters_response
+                and getattr(self._meters_response, "IsError", False) is not True
+                and getattr(self._meters_response, "IsDataAvailable", True) is not False
+                and self._meters_response.Lines
+            ):
                 daily_measurements = lines_to_timeseries(self._meters_response.Lines)
                 for dm in daily_measurements:
-                    if dm.start in covered_dates:
+                    if dm.start in covered_dates or dm.start > cutoff_date:
                         continue
                     if start_date <= dm.start <= end_date:
                         local_dt = datetime(
@@ -227,8 +243,8 @@ class ThamesWaterAPI:
                         records.append(
                             UsageRecord(
                                 timestamp=utc_ts,
-                                volume_m3=round(dm.usage / 1000.0, 5),
-                                cumulative_m3=round(dm.total / 1000.0, 5),
+                                volume_m3=max(0.0, round(dm.usage / 1000.0, 5)),
+                                cumulative_m3=round(dm.total / 1000.0, 5) if dm.total else 0.0,
                                 is_actual=True,
                             )
                         )
@@ -246,10 +262,15 @@ class ThamesWaterAPI:
                     min(end_date, start_date + timedelta(days=30)),
                     "D",
                 )
-                if older_usage.Lines:
+                if (
+                    older_usage
+                    and getattr(older_usage, "IsError", False) is not True
+                    and getattr(older_usage, "IsDataAvailable", True) is not False
+                    and older_usage.Lines
+                ):
                     older_measurements = lines_to_timeseries(older_usage.Lines)
                     for dm in older_measurements:
-                        if dm.start not in covered_dates and start_date <= dm.start <= end_date:
+                        if dm.start not in covered_dates and start_date <= dm.start <= cutoff_date:
                             local_dt = datetime(
                                 dm.start.year, dm.start.month, dm.start.day, tzinfo=LONDON_TZ
                             )
@@ -257,8 +278,8 @@ class ThamesWaterAPI:
                             records.append(
                                 UsageRecord(
                                     timestamp=utc_ts,
-                                    volume_m3=round(dm.usage / 1000.0, 5),
-                                    cumulative_m3=round(dm.total / 1000.0, 5),
+                                    volume_m3=max(0.0, round(dm.usage / 1000.0, 5)),
+                                    cumulative_m3=round(dm.total / 1000.0, 5) if dm.total else 0.0,
                                     is_actual=True,
                                 )
                             )
@@ -266,8 +287,29 @@ class ThamesWaterAPI:
             except Exception as err:
                 _LOGGER.debug("Could not fetch older daily usage: %s", err)
 
-        # Sort all records chronologically
+        # Sort all records chronologically and deduplicate timestamps
         records.sort(key=lambda r: r.timestamp)
+        deduped: List[UsageRecord] = []
+        seen_ts = set()
+        for r in records:
+            if r.timestamp not in seen_ts:
+                seen_ts.add(r.timestamp)
+                deduped.append(r)
+        records = deduped
+
+        # Guarantee cumulative_m3 is strictly non-decreasing across all records
+        running_c: Optional[float] = None
+        for r in records:
+            vol = r.volume_m3
+            if running_c is None:
+                running_c = r.cumulative_m3 if r.cumulative_m3 > 0 else vol
+            else:
+                if r.cumulative_m3 > running_c:
+                    running_c = r.cumulative_m3
+                else:
+                    running_c = round(running_c + vol, 5)
+            r.cumulative_m3 = round(running_c, 5)
+
         return records
 
     async def async_get_account(self) -> Account:

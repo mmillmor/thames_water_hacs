@@ -71,7 +71,7 @@ class ThamesWaterConsumptionSensor(ThamesWaterBaseSensor):
     """Sensor tracking Thames Water cumulative consumption (m3)."""
 
     _attr_device_class = SensorDeviceClass.WATER
-    _attr_state_class = SensorStateClass.TOTAL_INCREASING
+    _attr_state_class = None  # None to prevent HA recorder from generating real-time statistics for delayed readings
     _attr_native_unit_of_measurement = UnitOfVolume.CUBIC_METERS
 
     def __init__(

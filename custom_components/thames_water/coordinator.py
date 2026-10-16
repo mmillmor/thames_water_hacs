@@ -192,20 +192,38 @@ class ThamesWaterDataUpdateCoordinator(DataUpdateCoordinator[Dict[str, Any]]):
                 )
                 return
 
-        # Prepare StatisticData objects for each historical timestamp
+        # Deduplicate records by timestamp and ensure strict chronological ordering
+        records_sorted = sorted(records, key=lambda r: r.timestamp)
+        seen_timestamps = set()
+        unique_records = []
+        for rec in records_sorted:
+            if rec.timestamp not in seen_timestamps:
+                seen_timestamps.add(rec.timestamp)
+                unique_records.append(rec)
+
+        # Prepare StatisticData objects with strictly non-decreasing sum
         statistic_data_list: List[StatisticData] = []
-        for rec in records:
+        running_sum: Optional[float] = None
+        for rec in unique_records:
+            vol = max(0.0, rec.volume_m3)
+            if running_sum is None:
+                running_sum = rec.cumulative_m3 if rec.cumulative_m3 > 0 else vol
+            else:
+                if rec.cumulative_m3 > running_sum:
+                    running_sum = rec.cumulative_m3
+                else:
+                    running_sum = round(running_sum + vol, 5)
+
             stat_entry: Dict[str, Any] = {
                 "start": rec.timestamp,
-                "state": rec.volume_m3,        # Incremental usage in m3
-                "sum": rec.cumulative_m3,      # Running total meter reading in m3
+                "state": vol,
+                "sum": round(running_sum, 5),
             }
             statistic_data_list.append(stat_entry)  # type: ignore
 
         statistic_id = f"{STATISTIC_SOURCE}:{meter_id}_water_consumption"
-        entity_statistic_id = f"sensor.thames_water_meter_{meter_id.lower()}_cumulative_consumption"
 
-        # Build StatisticMetaData for external statistics (used by HA Energy Dashboard)
+        # Build StatisticMetaData for external statistics (used by HA Energy/Water Dashboard)
         meta: Dict[str, Any] = {
             "has_mean": False,
             "has_sum": True,
@@ -215,18 +233,6 @@ class ThamesWaterDataUpdateCoordinator(DataUpdateCoordinator[Dict[str, Any]]):
             "source": STATISTIC_SOURCE,
             "statistic_id": statistic_id,
             "name": f"Thames Water Meter {meter_id} Consumption",
-        }
-
-        # Build StatisticMetaData for entity statistics (used by entity More Info graph)
-        entity_meta: Dict[str, Any] = {
-            "has_mean": False,
-            "has_sum": True,
-            "mean_type": mean_type,
-            "unit_of_measurement": "m³",
-            "unit_class": "volume",
-            "source": "recorder",
-            "statistic_id": entity_statistic_id,
-            "name": f"Thames Water Meter {meter_id} Cumulative Consumption",
         }
 
         _LOGGER.info(
@@ -239,12 +245,11 @@ class ThamesWaterDataUpdateCoordinator(DataUpdateCoordinator[Dict[str, Any]]):
         try:
             from homeassistant.components.recorder.statistics import (
                 async_add_external_statistics,
-                async_import_statistics,
             )
         except ImportError:
             return
 
-        # 1. Add as external statistic source (available to HA Energy/Water dashboard)
+        # Add as external statistic source (available to HA Energy/Water dashboard)
         try:
             async_add_external_statistics(self.hass, meta, statistic_data_list)
             _LOGGER.debug("External statistics successfully injected for %s", statistic_id)
@@ -252,16 +257,5 @@ class ThamesWaterDataUpdateCoordinator(DataUpdateCoordinator[Dict[str, Any]]):
             _LOGGER.warning(
                 "Failed to import external statistics for %s: %s",
                 statistic_id,
-                err,
-            )
-
-        # 2. Also import directly to the sensor entity's statistics if recorder is active
-        try:
-            async_import_statistics(self.hass, entity_meta, statistic_data_list)
-            _LOGGER.debug("Entity statistics successfully injected for %s", entity_statistic_id)
-        except Exception as err:
-            _LOGGER.warning(
-                "Failed to import entity statistics for %s: %s",
-                entity_statistic_id,
                 err,
             )
