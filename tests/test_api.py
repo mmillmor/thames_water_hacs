@@ -153,6 +153,30 @@ async def test_get_consumption_skips_when_no_data_available():
 
 
 @pytest.mark.asyncio
+async def test_get_consumption_refreshes_daily_meter_data_each_poll():
+    """Test daily meter data is fetched again on subsequent consumption polls."""
+    with patch("custom_components.thames_water.api.ThamesWater") as mock_cls:
+        mock_client = MagicMock()
+        mock_client.account_number = 12345678
+        mock_client.get_meter_usage.return_value = MagicMock(
+            Lines=[],
+            IsError=False,
+            IsDataAvailable=False,
+            IsConsumptionAvailable=False,
+        )
+        mock_client.get_meters.return_value = MagicMock(Meters=[], Lines=[])
+        mock_cls.return_value = mock_client
+
+        api = ThamesWaterAPI("test@example.com", "password")
+        today = date.today()
+
+        await api.async_get_consumption("WM123456", today, today)
+        await api.async_get_consumption("WM123456", today, today)
+
+        assert mock_client.get_meters.call_count == 2
+
+
+@pytest.mark.asyncio
 async def test_get_consumption_monotonic_cumulative_repair():
     """Test that fluctuating or 0 Read values are repaired to be strictly monotonic."""
     with patch("custom_components.thames_water.api.ThamesWater") as mock_cls:
@@ -183,4 +207,3 @@ async def test_get_consumption_monotonic_cumulative_repair():
         assert records[1].cumulative_m3 == 1.02
         # Third reading: syncs with valid read 1.03 m3
         assert records[2].cumulative_m3 == 1.03
-

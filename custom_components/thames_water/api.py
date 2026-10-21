@@ -73,7 +73,6 @@ class ThamesWaterAPI:
         self.account_number = account_number
         self._session = session  # kept for signature compatibility
         self._client: Optional[ThamesWater] = None
-        self._meters_response: Optional[MetersResponse] = None
 
     def _get_or_create_client(self) -> ThamesWater:
         """Return or instantiate the ThamesWater client."""
@@ -94,7 +93,6 @@ class ThamesWaterAPI:
             except Exception:
                 pass
             self._client = None
-        self._meters_response = None
 
     async def async_login(self) -> bool:
         """Authenticate with Thames Water B2C portal."""
@@ -126,7 +124,6 @@ class ThamesWaterAPI:
 
         try:
             meters_resp: MetersResponse = await asyncio.to_thread(client.get_meters)
-            self._meters_response = meters_resp
         except AuthenticationError as err:
             raise ThamesWaterAuthError(f"Authentication expired: {err}") from err
         except Exception as err:
@@ -222,16 +219,15 @@ class ThamesWaterAPI:
         cutoff_date = max(covered_dates) if covered_dates else (date.today() - timedelta(days=2))
 
         try:
-            if self._meters_response is None:
-                self._meters_response = await asyncio.to_thread(client.get_meters)
+            meters_response: MetersResponse = await asyncio.to_thread(client.get_meters)
 
             if (
-                self._meters_response
-                and getattr(self._meters_response, "IsError", False) is not True
-                and getattr(self._meters_response, "IsDataAvailable", True) is not False
-                and self._meters_response.Lines
+                meters_response
+                and getattr(meters_response, "IsError", False) is not True
+                and getattr(meters_response, "IsDataAvailable", True) is not False
+                and meters_response.Lines
             ):
-                daily_measurements = lines_to_timeseries(self._meters_response.Lines)
+                daily_measurements = lines_to_timeseries(meters_response.Lines)
                 for dm in daily_measurements:
                     if dm.start in covered_dates or dm.start > cutoff_date:
                         continue
