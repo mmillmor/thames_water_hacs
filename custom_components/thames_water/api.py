@@ -177,22 +177,24 @@ class ThamesWaterAPI:
         records: List[UsageRecord] = []
         covered_dates: set[date] = set()
 
+        # Thames Water publishes readings with a delay of about three days.
+        # Never import later dates, which may contain placeholder measurements.
+        cutoff_date = min(end_date, date.today() - timedelta(days=3))
+
         # Step 1: Hourly records for days in range (up to 7 days back)
-        hourly_start = max(start_date, end_date - timedelta(days=7))
+        hourly_start = max(start_date, cutoff_date - timedelta(days=7))
         current_day = hourly_start
 
-        while current_day <= end_date:
+        while current_day <= cutoff_date:
             try:
                 usage: MeterUsage = await asyncio.to_thread(
                     client.get_meter_usage, meter_id, current_day, current_day, "H"
                 )
-                # Verify that valid data is available for this day
                 if (
                     usage
                     and getattr(usage, "IsError", False) is not True
-                    and getattr(usage, "IsDataAvailable", True) is not False
-                    and getattr(usage, "IsConsumptionAvailable", True) is not False
                     and usage.Lines
+                    and any(line.Usage != 0 or line.Read != 0 for line in usage.Lines)
                 ):
                     hourly_measurements = meter_usage_lines_to_timeseries(
                         current_day, usage.Lines
@@ -213,11 +215,8 @@ class ThamesWaterAPI:
 
             current_day += timedelta(days=1)
 
-        # Step 2: Daily records for dates not covered by hourly
-        # Only import daily records up to the latest confirmed date with hourly data (or 2 days ago)
-        # to prevent injecting empty/placeholder rows for subsequent days.
-        cutoff_date = max(covered_dates) if covered_dates else (date.today() - timedelta(days=2))
-
+        # Step 2: Daily records for dates not covered by hourly, up to the
+        # latest date Thames Water is expected to have published.
         try:
             meters_response: MetersResponse = await asyncio.to_thread(client.get_meters)
 

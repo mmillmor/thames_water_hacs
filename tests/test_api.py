@@ -1,5 +1,5 @@
 """Test Thames Water API client."""
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 import pytest
 from unittest.mock import MagicMock, patch
 
@@ -150,6 +150,69 @@ async def test_get_consumption_skips_when_no_data_available():
 
         # Because IsDataAvailable is False, no records should be ingested
         assert len(records) == 0
+
+
+@pytest.mark.asyncio
+async def test_get_consumption_keeps_hourly_data_when_availability_flags_are_false():
+    """Test valid hourly readings are kept even when availability flags disagree."""
+    with patch("custom_components.thames_water.api.ThamesWater") as mock_cls:
+        mock_client = MagicMock()
+        mock_client.account_number = 12345678
+        line = Line(
+            Label="1:00",
+            Usage=15.0,
+            Read=150015.0,
+            IsEstimated=False,
+            MeterSerialNumberHis="WM123456",
+        )
+        mock_client.get_meter_usage.return_value = MagicMock(
+            Lines=[line],
+            IsError=False,
+            IsDataAvailable=False,
+            IsConsumptionAvailable=False,
+        )
+        mock_client.get_meters.return_value = MagicMock(Meters=[], Lines=[])
+        mock_cls.return_value = mock_client
+
+        api = ThamesWaterAPI("test@example.com", "password")
+        records = await api.async_get_consumption(
+            "WM123456", date(2026, 10, 1), date(2026, 10, 1)
+        )
+
+        assert len(records) == 1
+        assert records[0].volume_m3 == 0.015
+        assert records[0].cumulative_m3 == 150.015
+
+
+@pytest.mark.asyncio
+async def test_get_consumption_does_not_request_dates_within_publication_lag():
+    """Test hourly retrieval ends three days before today."""
+    with patch("custom_components.thames_water.api.ThamesWater") as mock_cls:
+        mock_client = MagicMock()
+        mock_client.account_number = 12345678
+        mock_client.get_meter_usage.return_value = MagicMock(Lines=[], IsError=False)
+        mock_client.get_meters.return_value = MagicMock(Meters=[], Lines=[object()])
+        mock_cls.return_value = mock_client
+
+        api = ThamesWaterAPI("test@example.com", "password")
+        today = date.today()
+        cutoff_date = today - timedelta(days=3)
+        with patch(
+            "custom_components.thames_water.api.lines_to_timeseries",
+            return_value=[
+                MagicMock(start=cutoff_date, usage=25.0, total=150025.0),
+                MagicMock(start=cutoff_date + timedelta(days=1), usage=30.0, total=150055.0),
+            ],
+        ):
+            records = await api.async_get_consumption(
+                "WM123456", today - timedelta(days=7), today
+            )
+
+        requested_dates = [call.args[1] for call in mock_client.get_meter_usage.call_args_list]
+        assert requested_dates
+        assert max(requested_dates) == cutoff_date
+        assert len(records) == 1
+        assert records[0].volume_m3 == 0.025
 
 
 @pytest.mark.asyncio
